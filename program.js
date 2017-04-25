@@ -11,36 +11,49 @@ var secrets = require('./secrets.js');
 
 var songkick = songkick_wrapper.create(secrets.songkick_apiKey);
 
-var event = songkick.getEventDetails(process.argv[2]);
-
-var artists = [];
-
 // Initial access token. When expired, will be refreshed
 var access_token = secrets.spotify_accessToken;
 
-console.log("Server starting.");
+var mode = 'verbose';
 
-// get list of artists for the inputted event ID
-event.then(function(value) {
+
+
+function app(eventID) {
     
-    value.results.event.performance.forEach(function(artist, i) {
-        //console.log(artist.displayName);
-        
-        // add spotify ID (sid) to the artist's object in artists[]
-        getSpotifyArtistId(artist.displayName, function(sid) {
-            
-            // add the artist to the artists[] list
-            artists[i] = {displayName: artist.displayName,
-                                        billing: i,
-                                        sid: sid};
-            
-            //console.log(artists[i]);
+    var event = songkick.getEventDetails(eventID);
+
+    var artists = [];
+
+    console.log("Server starting.");
+
+    // get list of artists for the inputted event ID
+    event.then(function(value) {
+
+        value.results.event.performance.forEach(function(artist, i) {
+            //console.log(artist.displayName);
+
+            // add spotify ID (sid) to the artist's object in artists[]
+            getSpotifyArtistId(artist.displayName, function(sid) {
+
+                // add the artist to the artists[] list
+                artists[i] = {displayName: artist.displayName,
+                                            billing: i,
+                                            sid: sid};
+
+                //console.log(artists[i]);
+            });
+
         });
-        
+
+        //console.log(artists);
     });
     
-    //console.log(artists);
-});
+}
+
+
+
+
+
 
 
 // Gets an artists's spotify ID by doingn a search for the artist's displayname
@@ -167,8 +180,8 @@ function spotify_authenticate(code) {
 
 
 // Refresh access token
-// Returns new access token
-function spotify_refreshToken() {
+// Runs callback function after refreshing token
+function spotify_refreshToken(callback, params) {
     
     var refreshOptions = {
         url: 'https://accounts.spotify.com/api/token',
@@ -186,7 +199,32 @@ function spotify_refreshToken() {
         if (!error && response.statusCode === 200) {
             
             access_token = body.access_token;
-            console.log('access token: ' + body.access_token);
+            
+            if (mode === 'verbose') {
+                console.log('current access token: ' + body.access_token);
+            }
+            
+            // test connection
+            console.log('whoami:');
+            spotify_whoAmI(function(error, response, body) {
+                if (!error && response.statusCode === 200) {
+                    
+                    if (mode === 'verbose') {
+                        console.log('I am ' + body.display_name);
+                    }
+                    
+                    // Now that we have a current token, start the application
+                    callback(params);
+                    
+                }
+                else {
+                    console.log('error: ' + error);
+                    console.log('status: ' + response.statusCode);
+                    console.log('body: ' + body);
+                    console.log('headers: ' + options.headers.Authorization);
+                    console.log(access_token);
+                }
+            });
         }
         else {
             console.log('error: ' + error);
@@ -196,7 +234,32 @@ function spotify_refreshToken() {
     })
 }
 
-spotify_refreshToken();
+
+
+// Makes a request for the currently logged in Spotify user
+// takes a callback with error, resposne and body params
+function spotify_whoAmI(callback) {
+    
+    //console.log(access_token);
+    var options = {
+        url: 'https://api.spotify.com/v1/me',
+        headers: {
+            'Authorization': 'Bearer ' + access_token
+        },
+        json: true
+    };
+    
+    request.get(options, callback);
+    
+}
+
+
+
+
+
+// Get a new token and start the application
+spotify_refreshToken(app, process.argv[2]);
+
 
 
 
