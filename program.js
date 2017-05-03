@@ -1,3 +1,6 @@
+// Let's try using strict
+"use strict";
+
 var songkick_wrapper = require('songkick-wrapper');
 var http = require('http');
 var https = require('https');
@@ -7,53 +10,162 @@ var secrets = require('./secrets.js');
 // current secrets:
 // songkick_apiKey
 // spotify_clientId
-// spotify_secret
+// spotify_secret (not really used)
+// spotify_accessToken (should be replaced on refresh anyway)
+// spotify_refreshToken
 
-var songkick = songkick_wrapper.create(secrets.songkick_apiKey);
 
 // Initial access token. When expired, will be refreshed
 var access_token = secrets.spotify_accessToken;
-
-var mode = 'verbose';
-
+var owner_Id = 129048914;
 
 
-function app(eventID) {
+// -------------------
+// SONGKICK
+// -------------------
+
+
+// Make songkick request
+var songkick = songkick_wrapper.create(secrets.songkick_apiKey);
+var event = songkick.getEventDetails(process.argv[2]);
+
+var artists = [];
+
+
+
+console.log("Server starting.");
+//console.log(secrets.songkick_apiKey);
+
+// get list of artists for the inputted event ID
+// should probably add a branch in case the promise is rejected
+event.then(function(value) {
     
-    var event = songkick.getEventDetails(eventID);
-
-    var artists = [];
-
-    console.log("Server starting.");
-
-    // get list of artists for the inputted event ID
-    event.then(function(value) {
-
-        value.results.event.performance.forEach(function(artist, i) {
-            //console.log(artist.displayName);
-
-            // add spotify ID (sid) to the artist's object in artists[]
-            getSpotifyArtistId(artist.displayName, function(sid) {
-
-                // add the artist to the artists[] list
-                artists[i] = {displayName: artist.displayName,
-                                            billing: i,
-                                            sid: sid};
-
-                //console.log(artists[i]);
-            });
-
+    value.results.event.performance.forEach(function(artist, i) {
+        //console.log(artist.displayName);
+        
+        // add spotify ID (sid) to the artist's object in artists[]
+        getSpotifyArtistId(artist.displayName, function(sid) {
+            
+            // add the artist to the artists[] list
+            artists[i] = {displayName: artist.displayName,
+                                        billing: i,
+                                        sid: sid};
+            
+            //console.log(artists[i]);
         });
-
-        //console.log(artists);
+        
     });
+    
+    console.log(artists);
+});
+
+
+
+
+
+
+// -------------------
+// SPOTIFY
+// -------------------
+
+
+// -------------------
+// SPOTIFY - AUTHENTICATION
+// -------------------
+
+// Retrieve access and refresh tokens
+// (currently not used)
+//
+// PREP: Retrieve code by authenticating here https://accounts.spotify.com/authorize/?client_id= [CLIENT ID] &response_type=code&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=playlist-read-private%20playlist-modify-private%20playlist-read-collaborative%20playlist-modify-public%20user-top-read
+//
+// then running spotify_authenticate([CODE]);
+// where [CODE] is everything after "https://example.com/callback?code="
+//
+function spotify_authenticate(code) {
+    
+    var authOptions = {
+        url:'https://accounts.spotify.com/api/token',
+        form: {
+            code: code,
+            redirect_uri: 'https://example.com/callback',
+            grant_type: 'authorization_code'
+        },
+        headers: {
+            'Authorization': 'Basic ' + (new Buffer(secrets.spotify_clientId + ':' + secrets.spotify_secret).toString('base64'))
+        },
+        json: true
+    };
+    
+    
+    
+    request.post(authOptions, function(error, response, body) {
+        if (!error && response.statusCode === 200) {
+            
+            access_token = body.access_token;
+            console.log('access token: ' + body.access_token);
+            console.log('refresh token: ' + body.refresh_token);
+        }
+        else {
+            console.log('options: ' + JSON.stringify(authOptions));
+            console.log(secrets.spotify_clientId);
+            console.log(secrets.spotify_secret);
+            console.log('error: ' + error);
+            console.log('status: ' + response.statusCode);
+            console.log(body);
+        }
+    })
     
 }
 
 
 
+// Refresh access token
+//
+// Updates the global access token variable using the refresh token
+// see: https://developer.spotify.com/web-api/authorization-guide/
+//
+// Executes callback function (should switch to promises)
+// This should be run before any other spotify API calls that require user auth
+function spotify_refreshToken(params, callback) {
+    
+    var refreshOptions = {
+        url: 'https://accounts.spotify.com/api/token',
+        form: {
+            grant_type: 'refresh_token',
+            refresh_token: secrets.spotify_refreshToken
+        },
+        headers: {
+            'Authorization': 'Basic ' + (new Buffer(secrets.spotify_clientId + ':' + secrets.spotify_secret).toString('base64'))
+        },
+        json: true
+    }
+    
+    request.post(refreshOptions, function(error, response, body) {
+        if (!error && response.statusCode === 200) {
+            
+            access_token = body.access_token;
+            console.log('access token: ' + body.access_token);
+            callback(params);
+        }
+        else {
+            console.log('error: ' + error);
+            console.log('status: ' + response.statusCode);
+            console.log(body);
+        }
+    })
+}
+
+spotify_refreshToken('test', spotify_createPlaylist);
+
+//spotify_authenticate();
 
 
+
+
+
+// -------------------
+// SPOTIFY - FUNCTIONS
+// -------------------
 
 
 // Gets an artists's spotify ID by doingn a search for the artist's displayname
@@ -100,176 +212,35 @@ function getSpotifyArtistId(artistName, callback) {
 }
 
 
+
 // Creates a spotify playlist with the event name
 //
 // 
-function spotify_createPlaylist() {
+function spotify_createPlaylist(name) {
     
-}
-
-
-
-// Retrieve access and refresh tokens
-// 
-//
-// PREP: Retrieve code by authenticating here https://accounts.spotify.com/authorize/?client_id= [CLIENT ID] &response_type=code&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=playlist-read-private%20playlist-modify-private%20playlist-read-collaborative%20playlist-modify-public%20user-top-read
-function spotify_authenticate(code) {
-    
-    // Using https to make the request
-    /*var options = {
-        host: 'accounts.spotify.com',
-        path: '/authorize',
-        port: 443,
-        method: 'POST',
-        headers: {
-            'Authorization': 'Baisc ' + (new Buffer(secrets.spotify_clientId + ':'+secrets.spotify_secret).toString('base64'))
-        },
-        json: true
-    }
-    
-    var body = {
-        code: secrets.spotify_code,
-        redirect_uri: 'http://localhost/',
-        grant_type: 'authorization_code'
-    }
-    
-    var authRequest = https.request(options, function(response) {
-        
-        response.setEncoding('utf8');
-        response.on('data', function(chunk) {
-            console.log(chunk);
-        })
-    })
-    
-    authRequest.write(JSON.stringify(body));
-    authRequest.end();*/
-    
-    // Using Request, since that's what the spotify api example uses
-    // https://github.com/spotify/web-api-auth-examples/blob/master/authorization_code/app.js
-    
-    var authOptions = {
-        url:'https://accounts.spotify.com/api/token',
-        form: {
-            code: code,
-            redirect_uri: 'https://example.com/callback',
-            grant_type: 'authorization_code'
-        },
-        headers: {
-            'Authorization': 'Basic ' + (new Buffer(secrets.spotify_clientId + ':' + secrets.spotify_secret).toString('base64'))
-        },
-        json: true
-    };
-    
-    
-    
-    request.post(authOptions, function(error, response, body) {
-        if (!error && response.statusCode === 200) {
-            
-            access_token = body.access_token;
-            console.log('access token: ' + body.access_token);
-            console.log('refresh token: ' + body.refresh_token);
-        }
-        else {
-            console.log('error: ' + error);
-            console.log('status: ' + response.statusCode);
-            console.log(body);
-        }
-    })
-    
-}
-
-
-// Refresh access token
-// Runs callback function after refreshing token
-function spotify_refreshToken(callback, params) {
-    
-    var refreshOptions = {
-        url: 'https://accounts.spotify.com/api/token',
-        form: {
-            grant_type: 'refresh_token',
-            refresh_token: secrets.spotify_refreshToken
-        },
-        headers: {
-            'Authorization': 'Basic ' + (new Buffer(secrets.spotify_clientId + ':' + secrets.spotify_secret).toString('base64'))
-        },
-        json: true
-    }
-    
-    request.post(refreshOptions, function(error, response, body) {
-        if (!error && response.statusCode === 200) {
-            
-            access_token = body.access_token;
-            
-            if (mode === 'verbose') {
-                console.log('current access token: ' + body.access_token);
-            }
-            
-            // test connection
-            console.log('whoami:');
-            spotify_whoAmI(function(error, response, body) {
-                if (!error && response.statusCode === 200) {
-                    
-                    if (mode === 'verbose') {
-                        console.log('I am ' + body.display_name);
-                    }
-                    
-                    // Now that we have a current token, start the application
-                    callback(params);
-                    
-                }
-                else {
-                    console.log('error: ' + error);
-                    console.log('status: ' + response.statusCode);
-                    console.log('body: ' + body);
-                    console.log('headers: ' + options.headers.Authorization);
-                    console.log(access_token);
-                }
-            });
-        }
-        else {
-            console.log('error: ' + error);
-            console.log('status: ' + response.statusCode);
-            console.log(body);
-        }
-    })
-}
-
-
-
-// Makes a request for the currently logged in Spotify user
-// takes a callback with error, resposne and body params
-function spotify_whoAmI(callback) {
-    
-    //console.log(access_token);
     var options = {
-        url: 'https://api.spotify.com/v1/me',
+        url:'https://api.spotify.com/v1/users/'+owner_Id+'/playlists',
+        form: {
+            "description": "Created by Playlister",
+            "public": false,
+            "name": name
+        },
         headers: {
-            'Authorization': 'Bearer ' + access_token
+            'Authorization': 'Bearer ' + (new Buffer(access_token).toString('base64'))
         },
         json: true
     };
     
-    request.get(options, callback);
-    
+    request.post(options, function(error, response, body) {
+        if (!error && response.statusCode === 200) {
+            console.log('response: ' + response);
+        }
+        else {
+            console.log(response.statusCode);
+        }
+    })
 }
 
 
 
 
-
-// Get a new token and start the application
-spotify_refreshToken(app, process.argv[2]);
-
-
-
-
-
-// testing http
-/*http.createServer(function(request, response) {
-    response.writeHead(200, {"Content-Type":"text/plain"});
-    response.write('Billing: Artist');
-    for (var artist in artists) {
-        response.write(artist.billing + ': ' + artist.displayName + ': ' + artist.sid + '\n');
-    }
-    response.end();
-}).listen(8888);*/
