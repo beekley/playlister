@@ -40,10 +40,10 @@ function songkick_retrieveEventArtists(eventId, callback) {
     
     var url = 'http://api.songkick.com/api/3.0/events/'+eventId+'.json?apikey='+secrets.songkick_apiKey;
     
-    console.log('Spotify API URL: ' + url);
+    
     
     request.get(url, function(error, response, body) {
-        //console.log();
+        console.log('Retrieve Songkick event info for event id: ' + eventId + ', response: ' + response.statusCode);
         
         var resArtists = JSON.parse(body).resultsPage.results.event.performance;
         var resEventName = JSON.parse(body).resultsPage.results.event.displayName;
@@ -57,9 +57,11 @@ function songkick_retrieveEventArtists(eventId, callback) {
             getSpotifyArtistId(artist.displayName, function(sid) {
                 
                 // add the artist to the artists[] list
-                artists[i] = {displayName: artist.displayName,
-                                            billing: i,
-                                            sid: sid};
+                artists[i] = {
+                    displayName: artist.displayName,
+                    billing: i,
+                    sid: sid
+                };
 
                 //console.log(artists[i]);
                                 
@@ -67,7 +69,7 @@ function songkick_retrieveEventArtists(eventId, callback) {
                 
                 if (count == resArtists.length) {
                     
-                    console.log(artists);
+                    //console.log(artists);
                     
                     if (callback) {
                         callback(resEventName, artists);
@@ -169,10 +171,13 @@ function spotify_refreshToken(params, callback) {
     }
     
     request.post(refreshOptions, function(error, response, body) {
+        
+        console.log('Refreshing spotify token using refresh token: ' +secrets.spotify_refreshToken + ', response: ' + response.statusCode);
+        
         if (!error && response.statusCode === 200) {
             
             access_token = body.access_token;
-            console.log('access token: ' + body.access_token);
+            //console.log('access token: ' + body.access_token);
             callback(params);
         }
         else {
@@ -209,9 +214,13 @@ function getSpotifyArtistId(artistName, callback) {
     
     //console.log(options);
     
+    
+    // used https here instead of request. I like request better for little informed reason, so will likely switch this at some point
     var request = https.request(options, function(response) {
         //console.log('STATUS: ' + response.statusCode);
         //console.log('HEADERS: ' + JSON.stringify(response.headers));
+        
+        console.log('Getting Spotify artist id: ' + artistName + ', response: ' + response.statusCode);
         
         response.setEncoding('utf8');
         response.on('data', function (chunk) {
@@ -223,6 +232,7 @@ function getSpotifyArtistId(artistName, callback) {
                 callback(sid);
             } else {
                 console.log('No results found at ' + options.path);
+                callback('');
             }
             
             
@@ -247,7 +257,7 @@ function spotify_createPlaylist(name, callback) {
     var options = {
         url:'https://api.spotify.com/v1/users/'+owner_Id+'/playlists',
         body: { // need to use "body" instead of "form, see https://github.com/spotify/web-api/issues/360
-            "description": "Created by Playlister",
+            "description": "Created by a cute robot dog named Playlister. github.com/beekley/playlister",
             "public": false,
             "name": name
         },
@@ -258,12 +268,16 @@ function spotify_createPlaylist(name, callback) {
     };
     
     request.post(options, function(error, response, body) {
+        
+        console.log('Creating playlist, response: ' + response.statusCode);
+        
         if (!error && response.statusCode === 201) { // lol gotta check what the http codes mean. I was checking for 200 and this branch was never running...
             console.log('Successfully created playlist: ' + body.name);
             if (callback) {
                 callback(body.id);
             }
         }
+        
         else {
             console.log('error: ' + error);
             console.log('status: ' + response.statusCode);
@@ -277,14 +291,17 @@ function spotify_createPlaylist(name, callback) {
 // none of my functions have good error handling and this is no exception :/
 function spotify_addSongToPlaylist(songIds, playlistId, callback) {
     
+    //console.log(songIds);
+    
     // turn IDs into URIs
-    songIds.map(function(id) {
+    var songUris = songIds.map(function(id) {
         return 'spotify:track:'+id;
     })
     
+    //console.log(songUris);
+    
     // testing
-    songIds = ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
-"spotify:track:1301WleyT98MSxVHPZCA6M"];
+    //songIds = ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh","spotify:track:1301WleyT98MSxVHPZCA6M"];
     
     var options = {
         url: 'https://api.spotify.com/v1/users/' +owner_Id +'/playlists/' +playlistId +'/tracks',
@@ -292,18 +309,27 @@ function spotify_addSongToPlaylist(songIds, playlistId, callback) {
             'Authorization': 'Bearer ' + access_token
         },
         body: {
-            'uris' : songIds
+            'uris' : songUris
         },
         json: true
     }
     
     request.post(options, function(error, response, body) {
-        console.log('Adding song to playlist, response: ' + response.statusCode);
+        console.log('Adding songs to playlist, response: ' + response.statusCode);
         if (!error && response.statusCode === 201) {
             console.log('Successfully added songs');
             if (callback) {
                 callback();
             }
+        }
+        // retry if rate limited
+        else if (response.statusCode === 429 ) {
+            console.log('Rate Limited, retrying after ' + response.headers['Retry-After'] + ' seconds');
+            //console.log(response.headers)
+            
+            setTimeout(function() {
+                spotify_addSongToPlaylist(songIds, playlistId, callback);
+            }, 1000*response.headers['Retry-After'])
         }
         else {
             console.log('error: ' + error);
@@ -315,7 +341,46 @@ function spotify_addSongToPlaylist(songIds, playlistId, callback) {
     
 }
 
-
+// Takes in an artist's sid and a number of tracks (probably need to set a limit)
+// calls a callback function with an array of tracks (by id) as a parameter
+function spotify_getTopTracks(sid, num, callback) {
+    
+    var options = {
+        url: 'https://api.spotify.com/v1/artists/'+sid+'/top-tracks?country=US',
+        headers: {
+            'Authorization': 'Bearer ' + access_token
+        },
+        json: true
+    }
+    
+    request.get(options, function(error, response, body) {
+        console.log('Retrieving top tracks for artist sid: ' + sid + ', response: ' + response.statusCode);
+        
+        if (!error && response.statusCode === 200) {
+            //console.log(body);
+            
+            
+            
+            // get the track id from the top num tracks
+            var tracks = []
+            
+            for (var i = 0; i < num && i < body.tracks.length; i++) {
+                //console.log(body.tracks[i].id);
+                tracks.push(body.tracks[i].id);
+            }
+            
+            
+            if (callback) {
+                callback(tracks);
+            }
+        }
+        else {
+            console.log('error: ' + error);
+            console.log('status: ' + response.statusCode);
+            console.log(body);
+        }
+    })
+}
 
 
 // -------------------
@@ -329,7 +394,13 @@ spotify_refreshToken(null, application);
 function application() {
     songkick_retrieveEventArtists(process.argv[2], function(eventName, artists){
         spotify_createPlaylist(eventName, function(id) {
-            spotify_addSongToPlaylist([], id);
+            
+            artists.forEach(function(artist) {
+                spotify_getTopTracks(artist.sid, 2, function(tracks) {
+                    spotify_addSongToPlaylist(tracks, id);
+                });
+            });
+            
         });
     });
 }
